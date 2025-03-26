@@ -161,9 +161,38 @@ def get_screenshots_of_reddit_posts(reddit_object: dict, screenshot_num: int):
                 to_language=lang,
                 translator="google",
             )
-
             page.evaluate(
-                "tl_content => document.querySelector('[data-adclicklocation=\"title\"] > div > div > h1').textContent = tl_content",
+                """tl_content => {
+                    // Try different possible selectors for Reddit post titles
+                    const selectors = [
+                        // Modern shreddit selectors (new Reddit design)
+                        `h1[id^="post-title-t3_"]`,
+                        'shreddit-post h1[slot="title"]',
+                        // Older selectors
+                        '[data-adclicklocation="title"] > div > div > h1',
+                        '[data-test-id="post-content"] h1', 
+                        '[data-testid="post-content"] h1',
+                        'h1[slot="title"]',
+                        'div[slot="title"] h1',
+                        'div[data-testid="post-container"] h1',
+                        'shreddit-title h1'
+                    ];
+                    
+                    let titleElement = null;
+                    for (const selector of selectors) {
+                        const element = document.querySelector(selector);
+                        if (element) {
+                            titleElement = element;
+                            break;
+                        }
+                    }
+                    
+                    if (titleElement) {
+                        titleElement.textContent = tl_content;
+                    } else {
+                        console.error('Could not find title element with any known selector');
+                    }
+                }""",
                 texts_in_tl,
             )
         else:
@@ -176,13 +205,49 @@ def get_screenshots_of_reddit_posts(reddit_object: dict, screenshot_num: int):
                 zoom = settings.config["settings"]["zoom"]
                 # zoom the body of the page
                 page.evaluate("document.body.style.zoom=" + str(zoom))
-                # as zooming the body doesn't change the properties of the divs, we need to adjust for the zoom
-                location = page.locator('[data-test-id="post-content"]').bounding_box()
-                for i in location:
-                    location[i] = float("{:.2f}".format(location[i] * zoom))
-                page.screenshot(clip=location, path=postcontentpath)
+                
+                # Try multiple selectors for the post content
+                selectors = [
+                    'shreddit-post',
+                    'div[slot="text-body"]',
+                    'div[data-test-id="post-content"]',
+                    'div[data-testid="post-content"]'
+                ]
+                
+                found_element = False
+                for selector in selectors:
+                    if page.locator(selector).count() > 0:
+                        print_substep(f"Found post content using selector: {selector}")
+                        location = page.locator(selector).first.bounding_box()
+                        for i in location:
+                            location[i] = float("{:.2f}".format(location[i] * zoom))
+                        page.screenshot(clip=location, path=postcontentpath)
+                        found_element = True
+                        break
+                
+                if not found_element:
+                    print_substep("Could not find post content with known selectors, taking screenshot of whole page")
+                    page.screenshot(path=postcontentpath)
             else:
-                page.locator('[data-test-id="post-content"]').screenshot(path=postcontentpath)
+                # Try multiple selectors
+                selectors = [
+                    'shreddit-post',
+                    'div[slot="text-body"]',
+                    'div[data-test-id="post-content"]',
+                    'div[data-testid="post-content"]'
+                ]
+                
+                found_element = False
+                for selector in selectors:
+                    if page.locator(selector).count() > 0:
+                        print_substep(f"Found post content using selector: {selector}")
+                        page.locator(selector).first.screenshot(path=postcontentpath)
+                        found_element = True
+                        break
+                
+                if not found_element:
+                    print_substep("Could not find post content with known selectors, taking screenshot of whole page")
+                    page.screenshot(path=postcontentpath)
         except Exception as e:
             print_substep("Something went wrong!", style="red")
             resp = input(
@@ -203,9 +268,27 @@ def get_screenshots_of_reddit_posts(reddit_object: dict, screenshot_num: int):
             raise e
 
         if storymode:
-            page.locator('[data-click-id="text"]').first.screenshot(
-                path=f"assets/temp/{reddit_id}/png/story_content.png"
-            )
+            # Try multiple selectors for story content
+            story_selectors = [
+                'shreddit-post div[slot="text-body"]',
+                'div[slot="text-body"]',
+                'div.text-neutral-content',
+                '[data-click-id="text"]'
+            ]
+            
+            found_element = False
+            for selector in story_selectors:
+                if page.locator(selector).count() > 0:
+                    print_substep(f"Found story content using selector: {selector}")
+                    page.locator(selector).first.screenshot(
+                        path=f"assets/temp/{reddit_id}/png/story_content.png"
+                    )
+                    found_element = True
+                    break
+            
+            if not found_element:
+                print_substep("Could not find story content with known selectors, taking screenshot of whole page")
+                page.screenshot(path=f"assets/temp/{reddit_id}/png/story_content.png")
         else:
             for idx, comment in enumerate(
                 track(
@@ -231,7 +314,37 @@ def get_screenshots_of_reddit_posts(reddit_object: dict, screenshot_num: int):
                         to_language=settings.config["reddit"]["thread"]["post_lang"],
                     )
                     page.evaluate(
-                        '([tl_content, tl_id]) => document.querySelector(`#t1_${tl_id} > div:nth-child(2) > div > div[data-testid="comment"] > div`).textContent = tl_content',
+                        """([tl_content, tl_id]) => {
+                            // Try different possible selectors for Reddit comments
+                            const selectors = [
+                                // Modern shreddit selectors (new Reddit design)
+                                `shreddit-comment[id="t1_${tl_id}"] .md`,
+                                `shreddit-comment[id="t1_${tl_id}"] div[id^="comment-content-"]`,
+                                `shreddit-comment[id^="t1_${tl_id}"] div.text-neutral-content`,
+                                // Older selectors
+                                `#t1_${tl_id} > div:nth-child(2) > div > div[data-testid="comment"] > div`,
+                                `#t1_${tl_id} [data-testid="comment"] > div`,
+                                `#t1_${tl_id} div[data-testid="comment-top-meta"]`,
+                                `[id="t1_${tl_id}"] div[data-testid="comment"]`, 
+                                `div[id="t1_${tl_id}"] div[data-testid="comment"]`,
+                                `div.comment div[id="t1_${tl_id}"] .md`
+                            ];
+                            
+                            let commentElement = null;
+                            for (const selector of selectors) {
+                                const element = document.querySelector(selector);
+                                if (element) {
+                                    commentElement = element;
+                                    break;
+                                }
+                            }
+                            
+                            if (commentElement) {
+                                commentElement.textContent = tl_content;
+                            } else {
+                                console.error('Could not find comment element with any known selector');
+                            }
+                        }""",
                         [comment_tl, comment["comment_id"]],
                     )
                 try:
@@ -240,20 +353,56 @@ def get_screenshots_of_reddit_posts(reddit_object: dict, screenshot_num: int):
                         zoom = settings.config["settings"]["zoom"]
                         # zoom the body of the page
                         page.evaluate("document.body.style.zoom=" + str(zoom))
-                        # scroll comment into view
-                        page.locator(f"#t1_{comment['comment_id']}").scroll_into_view_if_needed()
-                        # as zooming the body doesn't change the properties of the divs, we need to adjust for the zoom
-                        location = page.locator(f"#t1_{comment['comment_id']}").bounding_box()
-                        for i in location:
-                            location[i] = float("{:.2f}".format(location[i] * zoom))
-                        page.screenshot(
-                            clip=location,
-                            path=f"assets/temp/{reddit_id}/png/comment_{idx}.png",
-                        )
+                        
+                        # Try multiple selectors for comment elements
+                        selectors = [
+                            f"shreddit-comment[id='t1_{comment['comment_id']}']",
+                            f"#t1_{comment['comment_id']}",
+                            f"div[id='t1_{comment['comment_id']}']"
+                        ]
+                        
+                        found_element = False
+                        for selector in selectors:
+                            if page.locator(selector).count() > 0:
+                                print_substep(f"Found comment using selector: {selector}")
+                                # scroll comment into view
+                                page.locator(selector).first.scroll_into_view_if_needed()
+                                # as zooming the body doesn't change the properties of the divs, we need to adjust for the zoom
+                                location = page.locator(selector).first.bounding_box()
+                                if location:
+                                    for i in location:
+                                        location[i] = float("{:.2f}".format(location[i] * zoom))
+                                    page.screenshot(
+                                        clip=location,
+                                        path=f"assets/temp/{reddit_id}/png/comment_{idx}.png",
+                                    )
+                                    found_element = True
+                                    break
+                        
+                        if not found_element:
+                            print_substep(f"Could not find comment {comment['comment_id']} with any selector, taking screenshot of visible area")
+                            page.screenshot(path=f"assets/temp/{reddit_id}/png/comment_{idx}.png")
                     else:
-                        page.locator(f"#t1_{comment['comment_id']}").screenshot(
-                            path=f"assets/temp/{reddit_id}/png/comment_{idx}.png"
-                        )
+                        # Try multiple selectors for comment elements
+                        selectors = [
+                            f"shreddit-comment[id='t1_{comment['comment_id']}']",
+                            f"#t1_{comment['comment_id']}",
+                            f"div[id='t1_{comment['comment_id']}']"
+                        ]
+                        
+                        found_element = False
+                        for selector in selectors:
+                            if page.locator(selector).count() > 0:
+                                print_substep(f"Found comment using selector: {selector}")
+                                page.locator(selector).first.screenshot(
+                                    path=f"assets/temp/{reddit_id}/png/comment_{idx}.png"
+                                )
+                                found_element = True
+                                break
+                        
+                        if not found_element:
+                            print_substep(f"Could not find comment {comment['comment_id']} with any selector, taking screenshot of visible area")
+                            page.screenshot(path=f"assets/temp/{reddit_id}/png/comment_{idx}.png")
                 except TimeoutError:
                     del reddit_object["comments"]
                     screenshot_num += 1
